@@ -1,0 +1,26 @@
+[MT5]
+login = 12345678
+password = your_password_here
+server = your_broker_server
+
+[Trading]
+symbols = USDJPY,EURUSD,GBPUSD
+timeframe = TIMEFRAME_M15
+lot_size = 0.1
+check_interval_seconds = 60
+close_positions_on_exit = True
+
+[Risk]
+max_positions = 5
+stop_loss_pips = 30
+take_profit_pips = 60
+
+[Strategy]
+name = moving_average_crossover
+fast_ma = 9
+slow_ma = 21
+# 代替戦略のパラメータ
+# name = rsi
+# rsi_period = 14
+# rsi_overbought = 70
+# rsi_oversold = 30
