@@ -328,7 +328,7 @@ def predict_market_direction(model, scaler):
     return prediction, probability
 
 # 取引実行
-def execute_trade(prediction, probability, confidence_threshold=0.6):
+def execute_trade(prediction, probability, confidence_threshold=0.6, symbol_info_get=None):
     if prediction == 0 or probability < confidence_threshold:
         logger.info(f"取引条件を満たしていません（予測: {prediction}, 確率: {probability:.4f}, 閾値: {confidence_threshold}）")
         return
@@ -354,7 +354,7 @@ def execute_trade(prediction, probability, confidence_threshold=0.6):
     current_price = symbol_info.ask if prediction == 1 else symbol_info.bid
 
     # ストップロスとテイクプロフィットの計算
-    point = symbol_info(SYMBOL).point
+    point = symbol_info_get(SYMBOL).point
     sl_distance = STOP_LOSS_PIPS * (10 * point)
     tp_distance = TAKE_PROFIT_PIPS * (10 * point)
 
@@ -457,12 +457,6 @@ def main():
                 trading_loop(model, scaler)
 
             # 待機（5分間隔）
-            time.sleep(60)
-
-    except KeyboardInterrupt:
-        logger.info("ユーザーによりプログラムが停止されました。")
-    except Exception as e:
-        logger.error(f"予期せぬエラーが発生しました: {e}")
     finally:
         logger.info("MT5との接続を終了します。")
         shutdown()
