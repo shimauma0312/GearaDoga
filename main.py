@@ -45,7 +45,7 @@ STOP_LOSS_PIPS = int(os.getenv("STOP_LOSS_PIPS", "20"))
 TAKE_PROFIT_PIPS = int(os.getenv("TAKE_PROFIT_PIPS", "30"))
 MODEL_PATH = os.getenv("MODEL_PATH", "models/trading_model.pkl")
 SCALER_PATH = os.getenv("SCALER_PATH", "models/scaler.pkl")
-TRAINING_PERIODS = int(os.getenv("TRAINING_PERIODS", "25000"))
+TRAINING_PERIODS = int(os.getenv("TRAINING_PERIODS", "5000"))
 RETRAIN_DAYS = int(os.getenv("RETRAIN_DAYS", "7"))
 
 
@@ -75,104 +75,57 @@ def connect_to_mt5():
 
 # 特徴量の作成
 def create_features(data):
-    logger.info(f"特徴量作成開始: {len(data)}行")
-
-    # データのコピーを作成して断片化を防止
-    data = data.copy()
-
-    # 特徴量計算用の辞書 - 最後に一度にデータフレームに追加
-    features = {}
+    logger.info("特徴量を作成しています...")
 
     # 基本的な価格データ
-    features['return'] = data['close'].pct_change()
-    features['range'] = data['high'] - data['low']
-    features['body'] = abs(data['open'] - data['close'])
-    # ゼロ除算を防ぐ
-    with np.errstate(divide='ignore', invalid='ignore'):
-        features['body_to_range'] = features['body'] / features['range']
+    data['return'] = data['close'].pct_change()
+    data['range'] = data['high'] - data['low']
 
-    # 移動平均と関連指標 (一部の期間だけ使用)
-    for window in [10, 20, 50]:
-        features[f'ma_{window}'] = data['close'].rolling(window=window).mean()
-        features[f'ma_diff_{window}'] = data['close'] - features[f'ma_{window}']
-        # ゼロ除算を防ぐ
-        with np.errstate(divide='ignore', invalid='ignore'):
-            features[f'ma_ratio_{window}'] = data['close'] / features[f'ma_{window}']
+    # 移動平均
+    for window in [5, 10, 20, 50]:
+        data[f'ma_{window}'] = data['close'].rolling(window=window).mean()
+        data[f'ma_diff_{window}'] = data['close'] - data[f'ma_{window}']
 
-        # ボリンジャーバンド
-        features[f'std_{window}'] = data['close'].rolling(window=window).std()
-        features[f'upper_band_{window}'] = features[f'ma_{window}'] + 2 * features[f'std_{window}']
-        features[f'lower_band_{window}'] = features[f'ma_{window}'] - 2 * features[f'std_{window}']
-
-        # ゼロ除算を防ぐ
-        band_width = features[f'upper_band_{window}'] - features[f'lower_band_{window}']
-        with np.errstate(divide='ignore', invalid='ignore'):
-            features[f'bb_position_{window}'] = (data['close'] - features[f'lower_band_{window}']) / band_width
-            features[f'bb_width_{window}'] = band_width / features[f'ma_{window}']
+    # ボリンジャーバンド (20期間)
+    window = 20
+    data['ma_20'] = data['close'].rolling(window=window).mean()
+    data['std_20'] = data['close'].rolling(window=window).std()
+    data['upper_band'] = data['ma_20'] + 2 * data['std_20']
+    data['lower_band'] = data['ma_20'] - 2 * data['std_20']
+    data['bb_position'] = (data['close'] - data['lower_band']) / (data['upper_band'] - data['lower_band'])
 
     # RSI (14期間)
     window = 14
     delta = data['close'].diff()
     gain = delta.where(delta > 0, 0).rolling(window=window).mean()
     loss = -delta.where(delta < 0, 0).rolling(window=window).mean()
-
-    # ゼロ除算を防ぐ
-    with np.errstate(divide='ignore', invalid='ignore'):
-        rs = gain / loss
-    features['rsi'] = 100 - (100 / (1 + rs))
+    rs = gain / loss
+    data['rsi'] = 100 - (100 / (1 + rs))
 
     # MACD
-    features['ema_12'] = data['close'].ewm(span=12).mean()
-    features['ema_26'] = data['close'].ewm(span=26).mean()
-    features['macd'] = features['ema_12'] - features['ema_26']
-    features['macd_signal'] = features['macd'].ewm(span=9).mean()
-    features['macd_hist'] = features['macd'] - features['macd_signal']
+    data['ema_12'] = data['close'].ewm(span=12).mean()
+    data['ema_26'] = data['close'].ewm(span=26).mean()
+    data['macd'] = data['ema_12'] - data['ema_26']
+    data['macd_signal'] = data['macd'].ewm(span=9).mean()
+    data['macd_hist'] = data['macd'] - data['macd_signal']
 
-    # ATRの計算
-    features['atr_14'] = calc_atr(data, 14)
+    # 価格の変動性
+    data['atr'] = calc_atr(data, 14)
 
-    # 過去の価格変動 (一部だけ使用)
-    for i in range(1, 3):
-        features[f'close_lag_{i}'] = data['close'].shift(i)
-        features[f'return_lag_{i}'] = features['return'].shift(i)
+    # 過去の価格変動
+    for i in range(1, 6):
+        data[f'close_lag_{i}'] = data['close'].shift(i)
+        data[f'return_lag_{i}'] = data['return'].shift(i)
 
     # 時間帯特徴
-    time_data = pd.to_datetime(data['time'])
-    features['hour'] = time_data.dt.hour
-    features['day_of_week'] = time_data.dt.dayofweek
+    data['hour'] = pd.to_datetime(data['time']).dt.hour
+    data['day_of_week'] = pd.to_datetime(data['time']).dt.dayofweek
 
-    # セッション情報
-    features['tokyo_session'] = ((features['hour'] >= 0) & (features['hour'] < 9)).astype(int)
-    features['london_session'] = ((features['hour'] >= 8) & (features['hour'] < 17)).astype(int)
-    features['ny_session'] = ((features['hour'] >= 13) & (features['hour'] < 22)).astype(int)
+    # 欠損値の処理
+    data = data.dropna()
 
-    # ボリューム関連特徴
-    if 'tick_volume' in data.columns:
-        features['volume_ma_20'] = data['tick_volume'].rolling(window=20).mean()
-        # ゼロ除算を防ぐ
-        with np.errstate(divide='ignore', invalid='ignore'):
-            features['volume_ratio_20'] = data['tick_volume'] / features['volume_ma_20']
+    return data
 
-    # 特徴量をデータフレームに一度に追加
-    features_df = pd.DataFrame(features)
-
-    # 元のデータと特徴量を結合
-    result = pd.concat([data.reset_index(), features_df], axis=1)
-
-    # 無限値を NaN に置き換え
-    result = result.replace([np.inf, -np.inf], np.nan)
-
-    # 欠損値の処理 - すべて削除するのではなく、主要な列だけで判断
-    # または、必要に応じて欠損値を埋めることも検討
-    essential_columns = ['close', 'return', 'ma_20', 'rsi', 'macd']
-    result = result.dropna(subset=essential_columns)
-
-    # 残りの欠損値を0で埋める
-    result = result.fillna(0)
-
-    logger.info(f"特徴量作成完了: {len(result)}行, {len(result.columns)}列")
-
-    return result
 
 # ATRの計算
 def calc_atr(data, window):
@@ -200,8 +153,9 @@ def create_target(data, pips_threshold=5, look_ahead=3):
 
     return data
 
+
 # データの取得
-def get_market_data(symbol, timeframe, num_bars=20000):
+def get_market_data(symbol, timeframe, num_bars=5000):
     logger.info(f"{symbol}の過去{num_bars}本のデータを取得しています...")
     rates = copy_rates_from_pos(symbol, timeframe, 0, num_bars)
 
@@ -242,14 +196,10 @@ def train_model():
 
     # モデルの学習
     model = RandomForestClassifier(
-        n_estimators=300,
-        max_depth=15,
-        min_samples_split=10,
-        min_samples_leaf=4,
-        max_features='sqrt',
+        n_estimators=100,
+        max_depth=10,
         random_state=42,
-        class_weight='balanced',
-        n_jobs=-1
+        class_weight='balanced'
     )
 
     logger.info(f"特徴量: {X.columns.tolist()}")
@@ -378,7 +328,7 @@ def predict_market_direction(model, scaler):
     return prediction, probability
 
 # 取引実行
-def execute_trade(prediction, probability, confidence_threshold=0.6):
+def execute_trade(prediction, probability, confidence_threshold=0.6, symbol_info_get=None):
     if prediction == 0 or probability < confidence_threshold:
         logger.info(f"取引条件を満たしていません（予測: {prediction}, 確率: {probability:.4f}, 閾値: {confidence_threshold}）")
         return
@@ -404,7 +354,7 @@ def execute_trade(prediction, probability, confidence_threshold=0.6):
     current_price = symbol_info.ask if prediction == 1 else symbol_info.bid
 
     # ストップロスとテイクプロフィットの計算
-    point = symbol_info(SYMBOL).point
+    point = symbol_info_get(SYMBOL).point
     sl_distance = STOP_LOSS_PIPS * (10 * point)
     tp_distance = TAKE_PROFIT_PIPS * (10 * point)
 
@@ -506,13 +456,7 @@ def main():
                 # 取引ロジックの実行
                 trading_loop(model, scaler)
 
-            # 待機（1分間隔）
-            time.sleep(60)
-
-    except KeyboardInterrupt:
-        logger.info("ユーザーによりプログラムが停止されました。")
-    except Exception as e:
-        logger.error(f"予期せぬエラーが発生しました: {e}")
+            # 待機（5分間隔）
     finally:
         logger.info("MT5との接続を終了します。")
         shutdown()

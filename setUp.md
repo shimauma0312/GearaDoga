@@ -4,55 +4,14 @@
 
 ## 目次
 
-1. [Pythonのインストール](#Pythonのインストール)
-2. [前提条件](#前提条件)
-3. [インストール手順](#インストール手順)
-4. [設定方法](#設定方法)
-5. [起動方法](#起動方法)
-6. [運用方法](#運用方法)
-7. [ログの確認](#ログの確認)
-8. [モデルの再学習](#モデルの再学習)
-9. [トラブルシューティング](#トラブルシューティング)
-
-## Pythonのインストール
-
-このツールを実行するにはPython 3.8以上が必要です。Pythonがインストールされていない場合は、以下の手順でインストールしてください。
-
-### Windowsの場合
-
-1. [Python公式サイト](https://www.python.org/downloads/) にアクセスし、最新のPython 3.8以上をダウンロードします。
-2. インストーラーを実行し、**"Add Python to PATH"** にチェックを入れてから **"Install Now"** をクリックします。
-3. インストールが完了したら、以下のコマンドを実行して正しくインストールされているか確認します。
-
-```bash
-python --version
-```
-
-### Macの場合
-
-1. ターミナルを開き、以下のコマンドを実行してHomebrewがインストールされているか確認します。
-
-```bash
-brew --version
-```
-
-2. Homebrewがインストールされていない場合は、以下のコマンドを実行してインストールします。
-
-```bash
-/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-```
-
-3. Pythonをインストールします。
-
-```bash
-brew install python
-```
-
-4. インストールが完了したら、以下のコマンドを実行して正しくインストールされているか確認します。
-
-```bash
-python3 --version
-```
+1. [前提条件](#前提条件)
+2. [インストール手順](#インストール手順)
+3. [設定方法](#設定方法)
+4. [起動方法](#起動方法)
+5. [運用方法](#運用方法)
+6. [ログの確認](#ログの確認)
+7. [モデルの再学習](#モデルの再学習)
+8. [トラブルシューティング](#トラブルシューティング)
 
 ## 前提条件
 
@@ -71,14 +30,14 @@ pip install numpy pandas scikit-learn python-dotenv schedule MetaTrader5
 2. リポジトリをクローンまたはスクリプトをダウンロードします：
 
 ```bash
-git clone https://github.com/shimauma0312/GearaDoga.git
-cd GearaDoga
+git clone https://github.com/your-username/mt5-scalping-bot.git
+cd mt5-scalping-bot
 ```
 
 3. `.env`ファイルをテンプレートからコピーして作成します：
 
 ```bash
-cp .env.example .env
+cp .env.template .env
 ```
 
 ## 設定方法
@@ -103,6 +62,15 @@ STOP_LOSS_PIPS=20          # ストップロス（pips）
 TAKE_PROFIT_PIPS=30        # テイクプロフィット（pips）
 ```
 
+### モデル設定
+
+```
+MODEL_PATH=models/trading_model.pkl  # モデルの保存先
+SCALER_PATH=models/scaler.pkl        # スケーラーの保存先
+TRAINING_PERIODS=5000               # 学習に使用するローソク足の数
+RETRAIN_DAYS=7                      # 再学習の間隔（日数）
+```
+
 ## 起動方法
 
 MetaTrader 5を起動し、ログインした状態で以下のコマンドを実行します：
@@ -123,9 +91,14 @@ python trading_bot.py
    - モデルがある場合は読み込み
 
 2. **定期的な処理**：
-   - 1分ごとに市場状態を分析
+   - 5分ごとに市場状態を分析
    - 予測結果に基づいて取引を実行
    - 毎週日曜日の深夜2時に自動的にモデルを再学習
+
+3. **取引ロジック**：
+   - 機械学習モデルが上昇/下降/横ばいを予測
+   - 予測の確信度（確率）が閾値を超えた場合のみ取引
+   - 一度に持つポジション数に制限あり
 
 ## ログの確認
 
@@ -134,6 +107,13 @@ python trading_bot.py
 ```bash
 tail -f logs/trading_YYYYMMDD.log
 ```
+
+ログには以下の情報が含まれます：
+- 接続情報
+- モデルのトレーニング状況
+- 予測結果と確率
+- 取引の実行結果
+- エラーメッセージ（発生した場合）
 
 ## モデルの再学習
 
@@ -163,4 +143,3 @@ tail -f logs/trading_YYYYMMDD.log
 - ログファイルを確認し、エラーメッセージを特定
 - Pythonのバージョンを確認（3.8以上が必要）
 - 必要なライブラリがすべてインストールされているか確認
-
