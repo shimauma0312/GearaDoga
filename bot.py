@@ -316,7 +316,7 @@ def load_model():
 # 予測の実行
 def predict_market_direction(model, scaler):
     # 最新のデータを取得（予測用）
-    df = get_market_data(SYMBOL, TIMEFRAME, 100)  # 100本分のデータを取得
+    df = get_market_data(SYMBOL, TIMEFRAME, 400)  # 400本分のデータを取得
     if df is None:
         return None
 
