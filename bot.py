@@ -9,8 +9,6 @@ import schedule
 from dotenv import load_dotenv
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.preprocessing import StandardScaler
-from sklearn.model_selection import GridSearchCV, cross_val_score
-from imblearn.over_sampling import SMOTE
 from MetaTrader5 import *
 from MetaTrader5 import shutdown
 import MetaTrader5 as mt5
@@ -240,48 +238,32 @@ def train_model():
                 errors='ignore')
     y = df['target']
 
-    # データの前処理
-    # 欠損値の処理
-    X = X.fillna(0)
-
     # 標準化
     scaler = StandardScaler()
     X_scaled = scaler.fit_transform(X)
 
-    # クラス不均衡の処理
-    smote = SMOTE(random_state=42)
-    X_resampled, y_resampled = smote.fit_resample(X_scaled, y)
-
-    # ハイパーパラメータのチューニング
-    param_grid = {
-        'n_estimators': [100, 200, 300],
-        'max_depth': [10, 15, 20],
-        'min_samples_split': [2, 5, 10],
-        'min_samples_leaf': [1, 2, 4],
-        'max_features': ['auto', 'sqrt', 'log2']
-    }
-
-    model = RandomForestClassifier(random_state=42, class_weight='balanced', n_jobs=-1)
-    grid_search = GridSearchCV(estimator=model, param_grid=param_grid, cv=5, n_jobs=-1, verbose=2)
-    grid_search.fit(X_resampled, y_resampled)
-
-    best_model = grid_search.best_estimator_
-
-    # クロスバリデーションによるモデル評価
-    cv_scores = cross_val_score(best_model, X_resampled, y_resampled, cv=5)
-    logger.info(f"クロスバリデーションスコア: {cv_scores}")
-    logger.info(f"平均クロスバリデーションスコア: {np.mean(cv_scores)}")
+    # モデルの学習
+    model = RandomForestClassifier(
+        n_estimators=300,
+        max_depth=15,
+        min_samples_split=10,
+        min_samples_leaf=4,
+        max_features='sqrt',
+        random_state=42,
+        class_weight='balanced',
+        n_jobs=-1
+    )
 
     logger.info(f"特徴量: {X.columns.tolist()}")
 
-    best_model.fit(X_resampled, y_resampled)
+    model.fit(X_scaled, y)
 
     logger.info(f"モデルのトレーニングが完了しました")
 
     # 特徴量の重要度
     feature_importance = pd.DataFrame({
         'feature': X.columns,
-        'importance': best_model.feature_importances_
+        'importance': model.feature_importances_
     }).sort_values('importance', ascending=False)
 
     logger.info("特徴量の重要度 (上位10):")
@@ -289,9 +271,9 @@ def train_model():
         logger.info(f"{row['feature']}: {row['importance']:.4f}")
 
     # モデルと標準化のための情報を保存
-    save_model(best_model, scaler)
+    save_model(model, scaler)
 
-    return best_model, scaler
+    return model, scaler
 
 
 # モデルの保存
