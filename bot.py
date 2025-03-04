@@ -10,6 +10,8 @@ from dotenv import load_dotenv
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.preprocessing import StandardScaler
 from MetaTrader5 import *
+from MetaTrader5 import shutdown
+import MetaTrader5 as mt5
 
 
 # ロギング設定
@@ -54,7 +56,7 @@ def connect_to_mt5():
     logger.info("MT5に接続を試みています...")
 
     # MetaTrader 5の初期化
-    if not initialize():
+    if not mt5.initialize():
         logger.error(f"MT5の初期化に失敗しました: {last_error()}")
         return False
 
@@ -378,7 +380,7 @@ def predict_market_direction(model, scaler):
     return prediction, probability
 
 # 取引実行
-def execute_trade(prediction, probability, confidence_threshold=0.6):
+def execute_trade(prediction, probability, confidence_threshold=0.3):
     if prediction == 0 or probability < confidence_threshold:
         logger.info(f"取引条件を満たしていません（予測: {prediction}, 確率: {probability:.4f}, 閾値: {confidence_threshold}）")
         return
@@ -404,7 +406,12 @@ def execute_trade(prediction, probability, confidence_threshold=0.6):
     current_price = symbol_info.ask if prediction == 1 else symbol_info.bid
 
     # ストップロスとテイクプロフィットの計算
-    point = symbol_info(SYMBOL).point
+    symbol_info_obj = mt5.symbol_info(SYMBOL)
+    if symbol_info_obj is None:
+        logger.error(f"シンボル情報の取得に失敗しました: {mt5.last_error()}")
+        return
+    
+    point = symbol_info_obj.point
     sl_distance = STOP_LOSS_PIPS * (10 * point)
     tp_distance = TAKE_PROFIT_PIPS * (10 * point)
 
@@ -417,6 +424,14 @@ def execute_trade(prediction, probability, confidence_threshold=0.6):
         tp = current_price - tp_distance
         trade_type = ORDER_TYPE_SELL
 
+    # シンボルの充填モードを取得 - 充填モード定数を修正
+    # MT5の充填モードを確認（異なるブローカーでサポートされる充填モードが異なる）
+    logger.info(f"シンボル {SYMBOL} の充填モード: {symbol_info_obj.filling_mode}")
+    
+    # 充填モードを設定
+    # 一般的に使用される充填モード
+    filling_type = ORDER_FILLING_IOC  # 指定した量で注文を実行、または現在の市場価格でキャンセル
+    
     # 注文送信
     request = {
         "action": TRADE_ACTION_DEAL,
@@ -430,6 +445,7 @@ def execute_trade(prediction, probability, confidence_threshold=0.6):
         "magic": 123456,
         "comment": f"ML Scalper {datetime.datetime.now().strftime('%Y%m%d%H%M%S')}",
         "type_time": ORDER_TIME_GTC,
+        "type_filling": filling_type,
     }
 
     logger.info(f"取引を実行します: {SYMBOL}, {'買い' if trade_type == ORDER_TYPE_BUY else '売り'}, "
@@ -506,8 +522,8 @@ def main():
                 # 取引ロジックの実行
                 trading_loop(model, scaler)
 
-            # 待機（1分間隔）
-            time.sleep(60)
+            # 待機（5分間隔）
+            time.sleep(300)
 
     except KeyboardInterrupt:
         logger.info("ユーザーによりプログラムが停止されました。")
