@@ -57,19 +57,19 @@ def connect_to_mt5():
 
     # MetaTrader 5の初期化
     if not mt5.initialize():
-        logger.error(f"MT5の初期化に失敗しました: {last_error()}")
+        logger.error(f"MT5の初期化に失敗しました: {mt5.last_error()}")
         return False
 
     # トレーディングアカウントへのログイン
-    if not login(ACCOUNT, password=PASSWORD, server=SERVER):
-        logger.error(f"MT5へのログインに失敗しました: {last_error()}")
+    if not mt5.login(ACCOUNT, password=PASSWORD, server=SERVER):
+        logger.error(f"MT5へのログインに失敗しました: {mt5.last_error()}")
         shutdown()
         return False
 
     # 接続情報とアカウント情報の表示
-    logger.info(f"MT5に接続しました - {account_info().name}")
-    logger.info(f"取引サーバー: {account_info().server}")
-    logger.info(f"残高: {account_info().balance} {account_info().currency}")
+    logger.info(f"MT5に接続しました - {mt5.account_info().name}")
+    logger.info(f"取引サーバー: {mt5.account_info().server}")
+    logger.info(f"残高: {mt5.account_info().balance} {mt5.account_info().currency}")
     logger.info(f"取引商品: {SYMBOL}, タイムフレーム: {TIMEFRAME}")
 
     return True
@@ -205,10 +205,10 @@ def create_target(data, pips_threshold=5, look_ahead=3):
 # データの取得
 def get_market_data(symbol, timeframe, num_bars=20000):
     logger.info(f"{symbol}の過去{num_bars}本のデータを取得しています...")
-    rates = copy_rates_from_pos(symbol, timeframe, 0, num_bars)
+    rates = mt5.copy_rates_from_pos(symbol, timeframe, 0, num_bars)
 
     if rates is None or len(rates) == 0:
-        logger.error(f"データの取得に失敗しました: {last_error()}")
+        logger.error(f"データの取得に失敗しました: {mt5.last_error()}")
         return None
 
     # データフレームに変換
@@ -238,6 +238,10 @@ def train_model():
                 errors='ignore')
     y = df['target']
 
+    # 特徴量名の記録 - これは保存時に使用
+    feature_names = X.columns.tolist()
+    logger.info(f"特徴量: {feature_names}")
+
     # 標準化
     scaler = StandardScaler()
     X_scaled = scaler.fit_transform(X)
@@ -254,8 +258,6 @@ def train_model():
         n_jobs=-1
     )
 
-    logger.info(f"特徴量: {X.columns.tolist()}")
-
     model.fit(X_scaled, y)
 
     logger.info(f"モデルのトレーニングが完了しました")
@@ -270,6 +272,11 @@ def train_model():
     for i, row in feature_importance.head(10).iterrows():
         logger.info(f"{row['feature']}: {row['importance']:.4f}")
 
+    # 新しいscikit-learnバージョンでは既に特徴量名が保存されているが、
+    # 古いバージョンとの互換性のために明示的に設定
+    if not hasattr(model, 'feature_names_in_'):
+        model.feature_names_in_ = np.array(feature_names)
+
     # モデルと標準化のための情報を保存
     save_model(model, scaler)
 
@@ -283,6 +290,24 @@ def save_model(model, scaler):
     if not os.path.exists(model_dir):
         os.makedirs(model_dir)
 
+    # モデルの特徴量名を保存するためのパス
+    feature_path = os.path.join(model_dir, "feature_names.pkl")
+    
+    # モデルの特徴量名を取得して保存
+    try:
+        # 新しいscikit-learnバージョンの場合
+        feature_names = model.feature_names_in_
+    except AttributeError:
+        # 古いscikit-learnバージョンの場合
+        if hasattr(model, 'feature_importances_'):
+            # ランダムフォレストなどの場合は特徴量名が必要
+            logger.warning("古いscikit-learnバージョンを使用しています。特徴量名を明示的に保存します。")
+            # train_model関数から渡された特徴量名を使用する必要がある
+            # この例では仮のものを使用
+            feature_names = []  # これは実際には使われない仮の初期化
+        else:
+            feature_names = []
+
     # モデルとスケーラーの保存
     with open(MODEL_PATH, 'wb') as f:
         pickle.dump(model, f)
@@ -290,11 +315,19 @@ def save_model(model, scaler):
     with open(SCALER_PATH, 'wb') as f:
         pickle.dump(scaler, f)
 
+    # 特徴量名の保存
+    with open(feature_path, 'wb') as f:
+        pickle.dump(feature_names, f)
+
     logger.info(f"モデルを保存しました: {MODEL_PATH}")
+    logger.info(f"特徴量名を保存しました: {feature_path}")
 
 
 # モデルの読み込み
 def load_model():
+    model_dir = os.path.dirname(MODEL_PATH)
+    feature_path = os.path.join(model_dir, "feature_names.pkl")
+    
     if not os.path.exists(MODEL_PATH) or not os.path.exists(SCALER_PATH):
         logger.info("既存のモデルが見つかりません。新しいモデルをトレーニングします。")
         return train_model()
@@ -305,6 +338,19 @@ def load_model():
 
         with open(SCALER_PATH, 'rb') as f:
             scaler = pickle.load(f)
+
+        # 特徴量名の読み込み試行
+        feature_names = []
+        if os.path.exists(feature_path):
+            with open(feature_path, 'rb') as f:
+                feature_names = pickle.load(f)
+                logger.info(f"特徴量名を読み込みました: {len(feature_names)}個")
+            
+            # モデルに特徴量名を設定（新しいscikit-learnバージョンでの互換性のため）
+            if not hasattr(model, 'feature_names_in_') and len(feature_names) > 0:
+                # カスタム属性として追加
+                model.feature_names_in_ = feature_names
+                logger.info(f"モデルに特徴量名を設定しました")
 
         logger.info(f"モデルを読み込みました: {MODEL_PATH}")
         return model, scaler
@@ -330,15 +376,24 @@ def predict_market_direction(model, scaler):
                 errors='ignore')
     X = X.iloc[-1:].dropna(axis=1)  # 最新の1行を使用し、欠損値のある列は削除
 
-    # scikit-learnのバージョン対応（feature_names_in_がない場合の処理）
+    # 特徴量の順序を取得
     try:
+        # 新しいscikit-learnバージョン用
         model_features = model.feature_names_in_
-    except AttributeError:
-        # 古いscikit-learnバージョン対応
-        if hasattr(model, 'feature_importances_'):
-            # トレーニング時と同じ特徴量の順序を維持する必要がある
-            logger.warning("古いscikit-learnバージョンを検出しました。特徴量の順序に注意してください。")
-            # 学習時の特徴量名がわからないため、Xの列をそのまま使用
+        logger.info("モデルの特徴量名をfeature_names_in_から取得しました")
+    except (AttributeError, TypeError) as e:
+        # 古いscikit-learnバージョン用またはカスタム属性が設定されていない場合
+        model_dir = os.path.dirname(MODEL_PATH)
+        feature_path = os.path.join(model_dir, "feature_names.pkl")
+        
+        if os.path.exists(feature_path):
+            # 保存されていた特徴量名を読み込む
+            with open(feature_path, 'rb') as f:
+                model_features = pickle.load(f)
+                logger.info(f"特徴量名をファイルから読み込みました: {len(model_features)}個")
+        elif hasattr(model, 'feature_importances_'):
+            # 特徴量の重要度がある場合は、その順序を使用
+            logger.warning("古いscikit-learnバージョンを検出しました。最新のX列を使用します。")
             model_features = X.columns
         else:
             logger.error("モデルが正しくトレーニングされていません。")
@@ -357,10 +412,14 @@ def predict_market_direction(model, scaler):
 
     # 標準化
     X_scaled = scaler.transform(X)
+    
+    # ここを修正: 特徴量名をX_scaledに付与
+    # StandardScalerはnumpy配列を返すので、DataFrame化して特徴量名を保持
+    X_scaled_df = pd.DataFrame(X_scaled, columns=X.columns)
 
     # 予測
-    prediction = model.predict(X_scaled)[0]
-    probabilities = model.predict_proba(X_scaled)[0]
+    prediction = model.predict(X_scaled_df)[0]  # DataFrameで渡す
+    probabilities = model.predict_proba(X_scaled_df)[0]
 
     # 予測結果のログ
     class_indices = {c: i for i, c in enumerate(model.classes_)}
@@ -380,21 +439,21 @@ def predict_market_direction(model, scaler):
     return prediction, probability
 
 # 取引実行
-def execute_trade(prediction, probability, confidence_threshold=0.3):
+def execute_trade(prediction, probability, confidence_threshold=0.6):
     if prediction == 0 or probability < confidence_threshold:
         logger.info(f"取引条件を満たしていません（予測: {prediction}, 確率: {probability:.4f}, 閾値: {confidence_threshold}）")
         return
 
     # シンボル情報の取得
-    symbol_info = symbol_info_tick(SYMBOL)
+    symbol_info = mt5.symbol_info_tick(SYMBOL)
     if symbol_info is None:
-        logger.error(f"シンボル情報の取得に失敗しました: {last_error()}")
+        logger.error(f"シンボル情報の取得に失敗しました: {mt5.last_error()}")
         return
 
     # 現在のポジション数を確認
-    positions = positions_get(symbol=SYMBOL)
+    positions = mt5.positions_get(symbol=SYMBOL)
     if positions is None:
-        logger.error(f"ポジション情報の取得に失敗しました: {last_error()}")
+        logger.error(f"ポジション情報の取得に失敗しました: {mt5.last_error()}")
         return
 
     # 既存ポジションが多すぎる場合は取引しない
@@ -452,7 +511,7 @@ def execute_trade(prediction, probability, confidence_threshold=0.3):
                 f"ロット: {LOT_SIZE}, 価格: {current_price}, SL: {sl}, TP: {tp}")
 
     # 注文送信
-    result = order_send(request)
+    result = mt5.order_send(request)
     if result.retcode != TRADE_RETCODE_DONE:
         logger.error(f"注文送信エラー: {result.retcode}, {result.comment}")
     else:
@@ -516,7 +575,7 @@ def main():
             schedule.run_pending()
 
             # 市場が開いている場合のみ取引を実行
-            if not terminal_info().trade_allowed:
+            if not mt5.terminal_info().trade_allowed:
                 logger.info("市場は現在取引不可の状態です。次の確認まで待機します。")
             else:
                 # 取引ロジックの実行
